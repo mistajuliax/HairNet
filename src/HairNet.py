@@ -69,15 +69,10 @@ def debPrintEdgeKeys(edges):
 
 def debPrintHairGuides(hairGuides):
     print("Hair Guides:")
-    guideN=0
-
-    for group in hairGuides:
+    for guideN, group in enumerate(hairGuides):
         print("Guide #",guideN)
-        i=0
-        for guide in group:
+        for i, guide in enumerate(group):
             print(i, " : ", guide)
-            i += 1
-        guideN+=1
 
 def debPrintSeams(seamVerts, seamEdges):
     print("Verts in the seam: ")
@@ -96,11 +91,14 @@ def getEdgeFromKey(mesh,key):
     v1 = key[0]
     v2 = key[1]
     theEdge = 0
-    for edge in mesh.edges:
-        if v1 in edge.vertices and v2 in edge.vertices:
-            #print("Found edge :", edge.index)
-            return edge
-    return 0
+    return next(
+        (
+            edge
+            for edge in mesh.edges
+            if v1 in edge.vertices and v2 in edge.vertices
+        ),
+        0,
+    )
 
 # returns all edge loops that a vertex is part of
 def getLoops(obj, v1, vert_edges, edge_faces, seamEdges):
@@ -164,11 +162,7 @@ def getLoops(obj, v1, vert_edges, edge_faces, seamEdges):
                         poles.append(vloop.pop(-1))
                     break
                 for i in new_ed: #new_ed - must have 3 or 4 edges coming from the vert
-                    eliminate = False # if edge shares face, it has to be eliminated
-                    for j in edge_faces[i]: # j is one of the face indices in edge_faces
-                        if j in active_f:
-                            eliminate = True
-                            break
+                    eliminate = any(j in active_f for j in edge_faces[i])
                     if not eliminate: # it's the next edge in the loop
                         stillGrowing = True
                         active_ed = i
@@ -207,38 +201,31 @@ def getSeams(obj):
     debug = False
     #Make a list of all edges marked as seams
     error = 0
-    seamEdges = []
-    for edge in obj.data.edges:
-        if edge.use_seam:
-            seamEdges.append(edge)
-    
+    seamEdges = [edge for edge in obj.data.edges if edge.use_seam]
     #Sort the edges in seamEdges
 #     seamEdges = sortEdges(seamEdges)
-    
+
     #Make a list of all verts in the seam
     seamVerts = []
     for edge in seamEdges:
         for vert in edge.vertices:
             if vert not in seamVerts:
                 seamVerts.append(vert)
-    
+
     if(len(seamEdges) < 2):
         error = 2
         return 0, 0, error
-    
+
     seamVerts = sortSeamVerts(seamVerts, seamEdges)
     if debug: debPrintSeams(seamVerts, seamEdges)
 
-    if(len(seamEdges) == 0):
+    if not seamEdges:
         error = 2
 
     return seamVerts, seamEdges, error
 
 def getNextVertInEdge(edge, vert):
-    if vert == edge.vertices[0]:
-        return edge.vertices[1]
-    else:
-        return edge.vertices[0]
+    return edge.vertices[1] if vert == edge.vertices[0] else edge.vertices[0]
 
 def makeNewHairSystem(headObject,systemName):
     bpy.ops.object.mode_set(mode='OBJECT')
@@ -273,10 +260,7 @@ def makePolyLine(objName, curveName, cList):
 def preserveSelection():
     #Preserve Active and selected objects
     storedActive = bpy.context.object
-    storedSelected = []
-    for sel in bpy.context.selected_objects:
-        storedSelected.append(sel)
-    
+    storedSelected = list(bpy.context.selected_objects)
     return storedActive, storedSelected
     
 
@@ -314,11 +298,7 @@ def sortLoop(obj, vloop, v1, seamEdges, vert_edges):
     loop = []
     loopRange = len(vloop)-1
 
-    if vloop[0] == v1.index:
-        loop = vloop.copy()
-
-    else:
-        loop = vloop[::-1]
+    loop = vloop.copy() if vloop[0] == v1.index else vloop[::-1]
     return loop
 
 def sortSeamVerts(verts, edges):
@@ -333,8 +313,8 @@ def sortSeamVerts(verts, edges):
     #Make a list of starting points so that each island will have a starting point. Make another "used edges" list
     
     def findEndpoint(vert):
+        count = 0
         for thisVert in verts:
-            count = 0
             if thisVert not in triedVerts:
                 triedVerts.append(thisVert)
                 #get all edges with thisVert in it
@@ -349,10 +329,7 @@ def sortSeamVerts(verts, edges):
                     beginEdge = thatEdge = all_edges[0]
                     while walking:
                         #get the other vert in the edge
-                        if thatVert == thatEdge.key[0]:
-                            thatVert = thatEdge.key[1]
-                        else:
-                            thatVert = thatEdge.key[0]
+                        thatVert = thatEdge.key[1] if thatVert == thatEdge.key[0] else thatEdge.key[0]
                         #Add current edge to triedEdges
                         triedEdges.append(thatEdge)
                         if thatVert not in triedVerts: triedVerts.append(thatVert)
@@ -364,7 +341,6 @@ def sortSeamVerts(verts, edges):
                         else:
                             #No unused edges were found
                             walking = False
-                            
     #                 break
         #at this point, we have found an endpoint
         if debug:
@@ -424,18 +400,13 @@ class HairNet (bpy.types.Operator):
     hairProxyList = []
 
     @classmethod
-
-    def poll(self, context):
+    def poll(cls, context):
         return(context.mode == 'OBJECT')
 
     def execute(self, context):
         error = 0   #0 = All good
-                    #1 = Hair guides have different lengths
-                    #2 = No seams in hair object
-                    #3 = Bevel on curve object
-                    
         targetObject = self.headObj
-        
+
         for thisHairObj in self.hairObjList:
             options = [
                        0,                   #0 the hair system's previous settings
@@ -445,7 +416,7 @@ class HairNet (bpy.types.Operator):
                        ]
             #A new hair object gets a new guides list
             hairGuides = []
-                        
+
             #if not self.targetHead:
             if thisHairObj.hnIsEmitter:
                 targetObject = thisHairObj
@@ -482,15 +453,15 @@ class HairNet (bpy.types.Operator):
 
                 '''_T_S create new and out'''
                 options[2] = makeNewHairSystem(targetObject,sysName)
-            
+
             if (self.meshKind=="SHEET"):
-                print("Hair sheet "+ thisHairObj.name)
+                print(f"Hair sheet {thisHairObj.name}")
                 #Create all hair guides
                 #for hairObj in self.hairObjList:
                 #Identify the seams and their vertices
                 #Start looking here for multiple mesh problems.
                 seamVerts, seamEdges, error = getSeams(thisHairObj)
-                
+
                 if(error == 0):
                     vert_edges = edge_faces = False
                     #For every vert in a seam, get the edge loop spawned by it
@@ -509,9 +480,11 @@ class HairNet (bpy.types.Operator):
             if (self.meshKind=="CURVE"):
                 #Preserve Active and selected objects
                 tempActive = headObj = bpy.context.object
-                tempSelected = []
-                tempSelected.append(bpy.context.selected_objects[0])
-                tempSelected.append(bpy.context.selected_objects[1])
+                tempSelected = [
+                    bpy.context.selected_objects[0],
+                    bpy.context.selected_objects[1],
+                ]
+
                 #hairObj = bpy.context.selected_objects[0]
                 hairObj = thisHairObj
                 bpy.ops.object.select_all(action='DESELECT')
@@ -549,7 +522,11 @@ class HairNet (bpy.types.Operator):
                 if error == 1:
                     self.report(type = {'ERROR'}, message = "Mesh guides have different lengths")
                 if error == 2:
-                    self.report(type = {'ERROR'}, message = ("No seams were defined in " + targetObject.name))
+                    self.report(
+                        type={'ERROR'},
+                        message=f"No seams were defined in {targetObject.name}",
+                    )
+
                     removeParticleSystem(targetObject, options[2])
                 if error == 3:
                     self.report(type = {'ERROR'}, message = "Cannot create hair from curves with a bevel object")
@@ -563,20 +540,20 @@ class HairNet (bpy.types.Operator):
 
         return {'FINISHED'}
 
-    def invoke (self, context, event):
+    def invoke(self, context, event):
 
         self.headObj = bpy.context.object
-        
+
         #Get a list of hair objects
-        self.hairObjList = []
-        for obj in bpy.context.selected_objects:
-            if obj != self.headObj or obj.hnIsEmitter:
-                self.hairObjList.append(obj)
-                
-        
+        self.hairObjList = [
+            obj
+            for obj in bpy.context.selected_objects
+            if obj != self.headObj or obj.hnIsEmitter
+        ]
+
         #if the last object selected is not flagged as a self-emitter, then assume we are creating hair on a head
         #Otherwise, each proxy will grow its own hair
-        
+
         if not self.headObj.hnIsEmitter:
             self.targetHead=True
             if len(bpy.context.selected_objects) < 2:
@@ -584,9 +561,9 @@ class HairNet (bpy.types.Operator):
                 return {'CANCELLED'}
         else:
             self.targetHead=False
-            
 
-        
+
+
 
         return self.execute(context)
     
@@ -595,33 +572,32 @@ class HairNet (bpy.types.Operator):
         for guide in hairGuides:
             if length == 0:
                 length = len(guide)
-            else:
-                if length != len(guide):
-                    return 1
+            elif length != len(guide):
+                return 1
         return 0
     
     def createHair(self, ob, guides, options):
         debug = False
-        
+
         tempActive = bpy.context.scene.objects.active
         bpy.context.scene.objects.active = ob
-        
+
         if debug: print("Active Object: ", bpy.context.scene.objects.active.name)
-    
+
         nGuides = len(guides)
         if debug: print("nGguides", nGuides)
         nSteps = len(guides[0])
         if debug: print("nSteps", nSteps)
-    
+
         # Create hair particle system if  needed
         #bpy.ops.object.mode_set(mode='OBJECT')
         #bpy.ops.object.particle_system_add()
 
         psys = options[2]
-    
+
         # Particle settings
         pset = psys.settings
-    
+
         if options[0] != 0:
             #Use existing settings
             psys.settings = options[0]
@@ -629,11 +605,11 @@ class HairNet (bpy.types.Operator):
         else:
             #Create new settings
             pset.type = 'HAIR'
-    
+
             pset.emit_from = 'FACE'
             pset.use_render_emitter = False
             pset.use_strand_primitive = True
-    
+
             # Children
             pset.child_type = 'SIMPLE'
             pset.child_nbr = 6
@@ -642,48 +618,44 @@ class HairNet (bpy.types.Operator):
             pset.child_length_threshold = 0.0
             pset.child_radius = 0.1
             pset.child_roundness = 1.0
-    
+
         #Rename Hair Settings
         pset.name = ''.join([options[2].name, " Hair Settings"])
         pset.hair_step = nSteps-1
         #This set the number of guides for the particle system. It may have to be the same for every instance of the system.
         pset.count = nGuides
-        
+
         #Render the emitter object?
-        if options[3]:
-            pset.use_render_emitter = True
-        else:
-            pset.use_render_emitter = False
-    
+        pset.use_render_emitter = bool(options[3])
         # Disconnect hair and switch to particle edit mode
-        
-    
+
+
         # Set all hair-keys
 #         dt = 100.0/(nSteps-1)
 #         dw = 1.0/(nSteps-1)
-    
+
         # Connect hair to mesh
         # Segmentation violation during render if this line is absent.
         # Connecting hair moves the mesh points by an amount equal to the object's location
-    
+
         bpy.ops.particle.particle_edit_toggle()
         bpy.context.scene.tool_settings.particle_edit.use_emitter_deflect = False
         bpy.context.scene.tool_settings.particle_edit.use_preserve_root = False
         bpy.context.scene.tool_settings.particle_edit.use_preserve_length = False
-        
+
         bpy.ops.particle.disconnect_hair(all=True)
         #Connecting and disconnecting hair causes them to jump when other particle systems are created.
         bpy.ops.particle.connect_hair(all=True)
-    
+
         for m in range(nGuides):
             #print("Working on guide #", m)
             nSteps = len(guides[m])
             guide = guides[m]
             part = psys.particles[m]
             part.location = guide[0]
-            
+
             #print("Guide #", m)
-            for n in range(0, nSteps):
+            for n in range(nSteps):
                 point = guide[n]
                 #print("Hair point #", n, ": ", point)
                 h = part.hair_keys[n]
@@ -692,35 +664,30 @@ class HairNet (bpy.types.Operator):
     #            print("#", n, " = ", point)
     #            h.time = n*dt
     #            h.weight = 1.0 - n*dw
-    
+
         # Toggle particle edit mode
         bpy.ops.particle.particle_edit_toggle()
-    
-    
+
+
         bpy.context.scene.objects.active = tempActive
         return
     
     def createHairGuides(self, obj, edgeLoops):
         hairGuides = []
-    
+
         #For each loop
         for loop in edgeLoops:
-            thisGuide = []
-            #For each vert in the loop
-            for vert in loop[0]:
-                thisGuide.append(obj.data.vertices[vert].co)
+            thisGuide = [obj.data.vertices[vert].co for vert in loop[0]]
             hairGuides.append(thisGuide)
-    
+
         return hairGuides
     
     def fibersToGuides(self, hairObj):
         guides = []
         hairs = self.getHairsFromFibers(hairObj)
-    
+
         for hair in hairs:
-            guide = []
-            for vertIdx in hair:
-                guide.append(hairObj.data.vertices[vertIdx].co.to_tuple())
+            guide = [hairObj.data.vertices[vertIdx].co.to_tuple() for vertIdx in hair]
             guides.append(guide)
         return guides
     
@@ -729,7 +696,7 @@ class HairNet (bpy.types.Operator):
         usedV = []
         usedE = []
         guides = []
-    
+
         # Create a dictionary with the vert index as key and edge-keys as value
         #It's a list of verts and the keys are the edges the verts belong to
         vert_edges = dict([(v.index, []) for v in me.vertices if v.hide!=1])
@@ -737,10 +704,10 @@ class HairNet (bpy.types.Operator):
             for v in ed.key:
                 if ed.key[0] in vert_edges and ed.key[1] in vert_edges:
                     vert_edges[v].append(ed.key)
-    
+
         #endPoints = dict([(v, []) for v in vert_edges if len(vert_edges[v])<2])
         endPoints = [v for v in vert_edges if len(vert_edges[v])<2]
-    
+
         #For every endpoint
         for vert in endPoints:
                 hair=[]
@@ -764,7 +731,7 @@ class HairNet (bpy.types.Operator):
                     while len(vert_edges[vert])>1:
                         #lookup the endpoint in vert_edges to get the edge(s) it's in
                         thisEdge = getEdgeFromKey(me,vert_edges[vert][0])
-    
+
                         if thisEdge in usedE:
                             thisEdge = getEdgeFromKey(me,vert_edges[vert][1])
                         #Add the vert to the hair
@@ -779,50 +746,50 @@ class HairNet (bpy.types.Operator):
                         #print("vert #", vert)
                         #print("edge #", thisEdge)
                         #print(vert_edges[vert])
-    
-    
+
+
                     #Add the current vert to the hair
                     hair.append(vert)
                     #mark the current vert as used
                     usedV.append(vert)
                     #add the hair to the list of hairs
                     guides.append(hair)
-    
+
         #guides now holds a list of hairs where each hair is a list of vertex indices in the mesh "me"
         return guides
     
     def loopsToGuides(self, obj, edgeLoops, hairGuides):
         guides = hairGuides
         #guides = []
-    
+
         for loop in edgeLoops:
-            hair = []
-            #hair is a list of coordinate sets. guides is a list of lists
-            for vert in loop[0]:
-                #co originally came through as a tuple. Is a Vector better?
-                hair.append(obj.data.vertices[vert].co)
+            hair = [obj.data.vertices[vert].co for vert in loop[0]]
     #             hair.append(obj.data.vertices[vert].co.to_tuple())
             guides.append(hair)
         return guides
     
     def subdivideGuideHairs(self, guides, hairObj):
-        debug = True
-        #number of points in original guide hair
-        hairLength = len(guides[0])
-    
-        #original number of hairs
-        numberHairs = len(guides)
-    
         #number of hairs added between existing hairs
         hairSprouts = hairObj.hnSproutHairs
-        
+
         #subdivide hairs
         if hairObj.hnSproutHairs > 0:
+            #number of points in original guide hair
+            hairLength = len(guides[0])
+
+            #original number of hairs
+            numberHairs = len(guides)
+
             #initialize an empty array so we don't have to think about inserting entries into lists. Check into this for later?
-            newHairs = [[0 for i in range(hairLength)] for j in range(totalNumberSubdivisions(numberHairs, hairSprouts))]
+            newHairs = [
+                [0 for _ in range(hairLength)]
+                for _ in range(totalNumberSubdivisions(numberHairs, hairSprouts))
+            ]
+
+            debug = True
             if debug: print ("Subdivide Hairs")
             newNumber = 1
-    
+
             #initial condition
             start = guides[0][0]
             newHairs[0][0] = start
@@ -831,16 +798,14 @@ class HairNet (bpy.types.Operator):
             #index identifies which row is current
             #kndex identifies the current hair in the list of new points
             #jndex identifies the current hair in the old list of hairs
-            for index in range(0, hairLength):
+            for index in range(hairLength):
                 if debug: print("Hair Row ", index)
                 #add the first hair's points
                 newHairs[0][index] = guides[0][index]
                 #Make a curve from the points in this row
-                thisRow = []
-                for aHair in guides:
-                    thisRow.append(aHair[index])
+                thisRow = [aHair[index] for aHair in guides]
                 curveObject = makePolyLine("rowCurveObj", "rowCurve", thisRow)
-                for jndex in range(0, numberHairs-1):
+                for jndex in range(numberHairs-1):
     #                 knot1 = curveObject.data.splines[0].bezier_points[jndex]
     #                 knot2 = curveObject.data.splines[0].bezier_points[jndex + 1]
                     knot1 = curveObject.splines[0].bezier_points[jndex]
@@ -848,11 +813,11 @@ class HairNet (bpy.types.Operator):
                     handle1 = knot1.handle_right
                     handle2 = knot2.handle_left
                     newPoints = mathutils.geometry.interpolate_bezier(knot1.co, handle1, handle2, knot2.co, hairSprouts+2)
-    
-    
+
+
                     #add new points to the matrix
                     #interpolate_bezier includes the endpoints so, for now, skip over them. re-write later to be a cleaner algorithm
-                    for kndex in range(0, len(newPoints)-2):
+                    for kndex in range(len(newPoints)-2):
                         newHairs[1+kndex+jndex*(1+hairSprouts)][index] = newPoints[kndex+1]
     #                     if debug: print("newHairs[", 1+kndex+jndex*(1+hairSprouts), "][", index, "] = ", newPoints[kndex], "SubD")
     #                     newHairs[jndex*(1+hairSprouts)][index] = newPoints[kndex]
@@ -860,20 +825,20 @@ class HairNet (bpy.types.Operator):
     #                     print("knot2 = ", knot2)
     #                     print("newHairs[", 1+kndex+jndex*(1+hairSprouts), "][", index, "] = ", newPoints[kndex])
                         newNumber = newNumber + 1
-    
-    
+
+
                     #add the end point
                     newHairs[(jndex+1)*(hairSprouts+1)][index] = guides[jndex+1][index]
     #                 if debug: print("newHairs[", (jndex+1)*(hairSprouts+1), "][", index, "] = ", guides[jndex][index], "Copy")
                     newNumber = newNumber + 1
-                    
+
                 #clean up the curve we created
                 bpy.data.curves.remove(curveObject)
             if debug:
                 print("NewHairs")
                 debPrintHairGuides(newHairs)
             guides = newHairs
-    
+
         return guides
 
 class HairNetPanel(bpy.types.Panel):
@@ -921,15 +886,15 @@ class HairNetPanel(bpy.types.Panel):
                 row.prop(thisHairObject, 'hnSproutHairs', text = "Subdivide U")
 #                 row.prop(thisHairObject, 'hnSubdivideHairSections', text = "Subdivide V")
 
-            
+
 
 
         #Draw this if it's a self-emitter object
         else:
             box = layout.box()
             try:
-                
-                
+
+
                 row = box.row()
                 row.label("Master Hair System")
                 row = box.row()
@@ -940,7 +905,7 @@ class HairNetPanel(bpy.types.Panel):
             row = box.row()
             row.label("Guide Subdivisions:")
             row.prop(self.headObj, 'hnSproutHairs', text = "Subdivide U")
-            
+
         row = layout.row()
         row.operator("particle.hairnet", text="Add Hair From Sheets").meshKind="SHEET"
         row = layout.row()
